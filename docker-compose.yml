@@ -1,0 +1,118 @@
+x-common-env: &common-env
+  POSTGRES_USER: ${POSTGRES_USER:-postgres}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: 5432
+  ORDERS_HOST: orders-service
+  PAYMENTS_HOST: payments-service
+  INVENTORY_HOST: inventory-service
+  NOTIFICATIONS_HOST: notifications-service
+  ORDERS_TCP_PORT: 4001
+  PAYMENTS_TCP_PORT: 4002
+  INVENTORY_TCP_PORT: 4003
+  NOTIFICATIONS_TCP_PORT: 4004
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      ORDERS_DB_NAME: ${ORDERS_DB_NAME:-orders_db}
+      PAYMENTS_DB_NAME: ${PAYMENTS_DB_NAME:-payments_db}
+      INVENTORY_DB_NAME: ${INVENTORY_DB_NAME:-inventory_db}
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres-init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-postgres}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  inventory-service:
+    build:
+      context: .
+      dockerfile: apps/inventory-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      DB_NAME: ${INVENTORY_DB_NAME:-inventory_db}
+      HTTP_PORT: 3003
+      TCP_PORT: 4003
+    ports:
+      - '3003:3003'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  payments-service:
+    build:
+      context: .
+      dockerfile: apps/payments-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      DB_NAME: ${PAYMENTS_DB_NAME:-payments_db}
+      HTTP_PORT: 3002
+      TCP_PORT: 4002
+    ports:
+      - '3002:3002'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  notifications-service:
+    build:
+      context: .
+      dockerfile: apps/notifications-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      HTTP_PORT: 3004
+      TCP_PORT: 4004
+    ports:
+      - '3004:3004'
+
+  orders-service:
+    build:
+      context: .
+      dockerfile: apps/orders-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      DB_NAME: ${ORDERS_DB_NAME:-orders_db}
+      HTTP_PORT: 3001
+      TCP_PORT: 4001
+    ports:
+      - '3001:3001'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      inventory-service:
+        condition: service_started
+      payments-service:
+        condition: service_started
+      notifications-service:
+        condition: service_started
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: apps/api-gateway/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      HTTP_PORT: 3000
+    ports:
+      - '3000:3000'
+    depends_on:
+      - orders-service
+      - payments-service
+      - inventory-service
+
+volumes:
+  pgdata:
